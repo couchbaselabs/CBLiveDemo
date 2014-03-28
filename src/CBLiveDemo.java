@@ -19,7 +19,7 @@ public class CBLiveDemo {
     }
 
     // Set your first document with a key of "hello" and a value of "couchbase!"
-    client.set("hello", "couchbase!").get();
+    client.set("hello_there", "couchbase!").get();
 
     // Return the result and cast it to string
     String result = (String) client.get("hello");
