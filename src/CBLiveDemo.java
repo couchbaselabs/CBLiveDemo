@@ -16,15 +16,21 @@ import net.spy.memcached.internal.BulkFuture;
 import net.spy.memcached.internal.BulkGetCompletionListener;
 import net.spy.memcached.internal.BulkGetFuture;
 
+
+// TODO Latching
+// TODO Randomise Pixel List
+// TODO Failure Handling in bulk Get
+// TODO Investigate Bulk timeouts.
+
 public class CBLiveDemo {
 	// Global options
 	// gets, sets per second.
 
-	private static String HOST = "127.0.0.1:8091";
+	private static String HOST = "192.168.60.105:8091";
 	private static String BUCKET = "default";
 	private static int MAX_SETS_SEC = 10000;
 	private static int MAX_GETS_SEC = 10000;
-	private static int BULK_GETS = 10;
+	private static int BULK_GETS = 20;
 
 
 	private static int FRAME_RATE = 25;                     // Frames Per Second
@@ -63,8 +69,14 @@ public class CBLiveDemo {
 					Map<String,?> response = bulkGetFuture.get();
 					for (int j = 0; j < BULK_GETS; j++)
 					{
-						int pixelValue = (Integer) response.get("px_" + (base+j));
-						mainWindow.window.pixelData[base+j] = pixelValue;
+						Object res = response.get("px_" + (base+j));
+						if (res != null){
+							mainWindow.window.pixelData[base+j] = (Integer) res;
+						}
+						else
+						{
+							mainWindow.window.pixelData[base+j] = 0xFF00FF;
+						}
 					}
 				}
 				else
