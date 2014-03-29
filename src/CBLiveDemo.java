@@ -24,7 +24,7 @@ public class CBLiveDemo {
 	private static String BUCKET = "default";
 	private static int MAX_SETS_SEC = 10000;
 	private static int MAX_GETS_SEC = 4000;
-	private static int BULK_GETS = 100;
+	private static int BULK_GETS = 10;
 
 
 	private static int FRAME_RATE = 25;                     // Frames Per Second
@@ -60,9 +60,12 @@ public class CBLiveDemo {
 			public void onComplete(BulkGetFuture<?> bulkGetFuture) throws Exception {
 				if (bulkGetFuture.getStatus().isSuccess()) 
 				{
-					// erm, iterate through map, add base, set pixel? erm.
 					Map<String,?> response = bulkGetFuture.get();
-					System.out.println(response);
+					for (int j = 0; j < BULK_GETS; j++)
+					{
+						int pixelValue = (Integer) response.get("px_" + (base+j));
+						System.out.println("px" + (base+j) + " was " + pixelValue);
+					}
 				}
 				else
 				{
@@ -87,11 +90,12 @@ public class CBLiveDemo {
 			//         if <1 has passed, wait until the end of that second.
 
 			while (true){
+
 				startTime = System.currentTimeMillis();
-				keyList.clear();
+
 				for(int i = 0; i < numPixels; i+= BULK_GETS)
 				{
-
+					keyList.clear();
 					//Get Bulk Call Here
 					for (int j = 0; j < BULK_GETS; j++)
 					{
@@ -106,6 +110,7 @@ public class CBLiveDemo {
 							try {
 								Thread.sleep((startTime + 50) - currentTime);
 								startTime = System.currentTimeMillis();
+
 							} catch (InterruptedException e) {}
 						}
 					}
