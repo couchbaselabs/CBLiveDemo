@@ -23,7 +23,7 @@ public class CBLiveDemo {
 	private static String HOST = "127.0.0.1:8091";
 	private static String BUCKET = "default";
 	private static int MAX_SETS_SEC = 10000;
-	private static int MAX_GETS_SEC = 4000;
+	private static int MAX_GETS_SEC = 10000;
 	private static int BULK_GETS = 10;
 
 
@@ -46,7 +46,7 @@ public class CBLiveDemo {
 
 
 	public static class CBReader extends Thread {
-		
+
 
 		class MyListener implements BulkGetCompletionListener{
 
@@ -56,7 +56,7 @@ public class CBLiveDemo {
 			{
 				base = i;
 			}
-			
+
 			public void onComplete(BulkGetFuture<?> bulkGetFuture) throws Exception {
 				if (bulkGetFuture.getStatus().isSuccess()) 
 				{
@@ -64,7 +64,7 @@ public class CBLiveDemo {
 					for (int j = 0; j < BULK_GETS; j++)
 					{
 						int pixelValue = (Integer) response.get("px_" + (base+j));
-						System.out.println("px" + (base+j) + " was " + pixelValue);
+						mainWindow.window.pixelData[base+j] = pixelValue;
 					}
 				}
 				else
@@ -74,7 +74,7 @@ public class CBLiveDemo {
 				}
 			}
 		}
-		
+
 		public void run() {
 
 			long startTime, currentTime;
@@ -96,7 +96,7 @@ public class CBLiveDemo {
 				for(int i = 0; i < numPixels; i+= BULK_GETS)
 				{
 					keyList.clear();
-					//Get Bulk Call Here
+
 					for (int j = 0; j < BULK_GETS; j++)
 					{
 						keyList.add("px_" + (i+j));
@@ -125,6 +125,9 @@ public class CBLiveDemo {
 
 			long startTime, currentTime;
 			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
+			int r,g,b, pixelValue;
+			int imageID = 0;
+			byte[] imageData;
 
 			// Loop forever:
 			//
@@ -136,9 +139,17 @@ public class CBLiveDemo {
 			//        if <1 has passed, wait until the end of that second.
 			while (true){
 				startTime = System.currentTimeMillis();
+				imageID = imageID ^ 0x1;
 				for(int i = 0; i < numPixels; i++)
 				{
-					client.set("px_"+i,mainWindow.window.pixelData[i]);
+					imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
+
+					b = imageData[(i*3) + 0] & 0xff;
+					g = imageData[(i*3) + 1 ] & 0xff;
+					r = imageData[(i*3) + 2] & 0xff;
+					pixelValue = (r << 16) | (g << 8) | (b << 0 ); 					
+
+					client.set("px_"+i,pixelValue);
 					if (( i % (MAX_SETS_SEC/20)) == 0)
 					{
 						currentTime = System.currentTimeMillis();
@@ -166,26 +177,13 @@ public class CBLiveDemo {
 		public void run() {
 			long startTime, currentTime;
 			int framePause = 1000 / FRAME_RATE;
-			int r,g,b, pixelValue;
-			int imageID = 0;
-			byte[] imageData; 
+
 			// Loop forever drawing contents of pixelData FRAME_RATE times per sec.
 			do
 			{      
 				// Record the time we started this frame
 				startTime=System.currentTimeMillis();
 
-				imageID = imageID ^ 0x1;
-				imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
-
-				for (int i=0; i < (window.frameWidth * window.frameHeight); i++)
-				{
-					b = imageData[(i*3) + 0] & 0xff;
-					g = imageData[(i*3) + 1 ] & 0xff;
-					r = imageData[(i*3) + 2] & 0xff;
-					pixelValue = (r << 16) | (g << 8) | (b << 0 ); 
-					window.pixelData[i] =  pixelValue;
-				}
 
 				window.drawFrame();
 
