@@ -1,4 +1,5 @@
 import com.couchbase.client.CouchbaseClient;
+import com.couchbase.client.CouchbaseConnectionFactoryBuilder;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
@@ -7,18 +8,31 @@ import java.awt.image.DataBufferByte;
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.imageio.ImageIO;
 
+import net.spy.memcached.FailureMode;
+import net.spy.memcached.OperationTimeoutException;
 import net.spy.memcached.internal.BulkFuture;
 import net.spy.memcached.internal.BulkGetCompletionListener;
 import net.spy.memcached.internal.BulkGetFuture;
+import net.spy.memcached.internal.CheckedOperationTimeoutException;
+import net.spy.memcached.internal.GetCompletionListener;
+import net.spy.memcached.internal.GetFuture;
+import net.spy.memcached.internal.OperationCompletionListener;
+import net.spy.memcached.internal.OperationFuture;
 
 
 // TODO Latching
-// TODO Randomise Pixel List
 // TODO Failure Handling in bulk Get
 // TODO Investigate Bulk timeouts.
 
@@ -26,25 +40,28 @@ public class CBLiveDemo {
 	// Global options
 	// gets, sets per second.
 
-	private static String HOST = "192.168.60.105:8091";
+//	private static String HOST = "192.168.60.105:8091";
+	private static String HOST = "127.0.0.1:8091";
 	private static String BUCKET = "default";
 	private static int MAX_SETS_SEC = 10000;
 	private static int MAX_GETS_SEC = 10000;
-	private static int BULK_GETS = 20;
+	private static int BULK_GETS = 1;
+	private static boolean USE_ASYNC = true;
 
 
 	private static int FRAME_RATE = 25;                     // Frames Per Second
 	private static int ZOOM_PIXEL_SIZE = 10;
 	private static int ZOOM_WIDTH = 100;
 	private static int ZOOM_HEIGHT = 60;
-	private static int ZOOM_X_OFFSET = 100;
-	private static int ZOOM_Y_OFFSET = 0;
+	private static int ZOOM_X_OFFSET = 130;
+	private static int ZOOM_Y_OFFSET = 20;
 	private static int NUM_IMAGES = 2;
 	private static BufferedImage[] imageSet;
+	private static int[] pixelOrder;
 	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/London_400x200.jpg";
 	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/CB_Demo_400x200.jpg";
-
-
+	
+	private static CountDownLatch frameLatch;
 	// Thread 1 - reader
 	// Thread 2 - writer
 	// Thread 3 - draw window 1
@@ -54,19 +71,25 @@ public class CBLiveDemo {
 	public static class CBReader extends Thread {
 
 
-		class MyListener implements BulkGetCompletionListener{
+		class MyBulkListener implements BulkGetCompletionListener{
 
 			private int base;
 
-			MyListener(int i)
+			MyBulkListener(int i)
 			{
 				base = i;
 			}
 
-			public void onComplete(BulkGetFuture<?> bulkGetFuture) throws Exception {
+			public void onComplete(BulkGetFuture<?> bulkGetFuture) {
 				if (bulkGetFuture.getStatus().isSuccess()) 
 				{
-					Map<String,?> response = bulkGetFuture.get();
+					Map<String, ?> response;
+					try {
+						response = bulkGetFuture.get();
+					} catch (Exception e) {
+						mainWindow.window.pixelData[base] = 0xFF00FF;
+						return;
+					}
 					for (int j = 0; j < BULK_GETS; j++)
 					{
 						Object res = response.get("px_" + (base+j));
@@ -82,16 +105,55 @@ public class CBLiveDemo {
 				else
 				{
 					// This one / set? didn't work
-					System.out.println("Borked");
+					System.out.println("Multi Borked");
 				}
+			}
+		}
+
+		class MyListener implements GetCompletionListener{
+
+			private int base;
+
+			MyListener(int i)
+			{
+				base = i;
+			}
+
+			public void onComplete(GetFuture<?> future) {
+				if (future.getStatus().isSuccess()) 
+				{
+					Object res;
+					try {
+						res = future.get();
+					} catch (Exception e) {
+						mainWindow.window.pixelData[base] = 0xFF00FF;
+						return;
+					}
+					if (res != null){
+						mainWindow.window.pixelData[base] = (Integer) res;
+					}
+					else
+					{
+						// Null - show magenta.
+						mainWindow.window.pixelData[base] = 0xFF00FF;
+					}
+				}
+				else
+				{
+					// Unsuccessful - show cyan.
+					mainWindow.window.pixelData[base] = 0x00FFFF;
+				}
+				frameLatch.countDown();
 			}
 		}
 
 		public void run() {
 
 			long startTime, currentTime;
+			int pixel;
 			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
 			List<String> keyList = new ArrayList<String>();
+			
 			// Loop forever:
 			//
 			//     For every pixel in the image; chunked into bulk size...
@@ -105,15 +167,52 @@ public class CBLiveDemo {
 
 				startTime = System.currentTimeMillis();
 
+				frameLatch = new CountDownLatch(numPixels);
+
+				
 				for(int i = 0; i < numPixels; i+= BULK_GETS)
 				{
 					keyList.clear();
 
-					for (int j = 0; j < BULK_GETS; j++)
+					pixel = pixelOrder[i];
+
+					if (USE_ASYNC)
 					{
-						keyList.add("px_" + (i+j));
+						if (BULK_GETS == 1)
+						{
+							GetFuture<Object> future = client.asyncGet("px_" + pixel);
+							future.addListener(new MyListener(pixel));
+						}
+						else
+						{
+							for (int j = 0; j < BULK_GETS; j++)
+							{
+								keyList.add("px_" + pixelOrder[(i+j)]);
+							}
+							client.asyncGetBulk(keyList).addListener(new MyBulkListener(pixel));
+						}
 					}
-					client.asyncGetBulk(keyList).addListener(new MyListener(i));
+					else // Synchronous
+					{
+						if (BULK_GETS == 1)
+						{
+							try
+							{
+								Object res = client.get("px_" + pixel);
+								mainWindow.window.pixelData[pixel] = (Integer) res;
+							}
+							catch(OperationTimeoutException e)
+							{
+								System.out.println("TIMEOUT on px_"  + pixel);
+								mainWindow.window.pixelData[pixel] = 0x00FFFF;
+							}
+						}
+						else
+						{
+							// TODO
+							assert(false);
+						}
+					}
 					if (( i % (MAX_GETS_SEC/20)) == 0)
 					{
 						currentTime = System.currentTimeMillis();
@@ -126,18 +225,45 @@ public class CBLiveDemo {
 							} catch (InterruptedException e) {}
 						}
 					}
-
+				}
+				try {
+					frameLatch.await();
+					Thread.sleep(500); // Dirty pause to allow the writer thread to start making progress;
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
 			}
 		}
 	}
 
 	public static class CBWriter extends Thread  {
+		
+		class WriteListener implements OperationCompletionListener{
+
+			private int base;
+
+			WriteListener(int i)
+			{
+				base = i;
+			}
+
+			public void onComplete(OperationFuture<?> future) {
+				try {
+					future.get();
+					mainWindow.window.pixelData[base] = 0x00FF00;
+				} catch (Exception e) {
+					System.out.println("WRITE EXCEPTION!");
+					mainWindow.window.pixelData[base] = 0xFF00FF;
+				}
+			}
+		}
+		
 		public void run() {
 
 			long startTime, currentTime;
 			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
-			int r,g,b, pixelValue;
+			int r,g,b, pixelValue, pixel;
 			int imageID = 0;
 			byte[] imageData;
 
@@ -152,16 +278,26 @@ public class CBLiveDemo {
 			while (true){
 				startTime = System.currentTimeMillis();
 				imageID = imageID ^ 0x1;
+				imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
 				for(int i = 0; i < numPixels; i++)
 				{
-					imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
-
-					b = imageData[(i*3) + 0] & 0xff;
-					g = imageData[(i*3) + 1 ] & 0xff;
-					r = imageData[(i*3) + 2] & 0xff;
+					pixel = pixelOrder[i];
+					
+					b = imageData[(pixel*3) + 0] & 0xff;
+					g = imageData[(pixel*3) + 1 ] & 0xff;
+					r = imageData[(pixel*3) + 2] & 0xff;
 					pixelValue = (r << 16) | (g << 8) | (b << 0 ); 					
 
-					client.set("px_"+i,pixelValue);
+					OperationFuture<Boolean> future = client.set("px_"+pixel,pixelValue);
+					//future.addListener(new WriteListener(i));
+//					try {
+//						future.get();
+//						mainWindow.window.pixelData[i] = 0x00FF00;
+//					} catch (Exception e) {
+//						System.out.println("WRITE EXCEPTION (2)!");
+//						mainWindow.window.pixelData[i] = 0xFF00FF;
+//					}
+					
 					if (( i % (MAX_SETS_SEC/20)) == 0)
 					{
 						currentTime = System.currentTimeMillis();
@@ -173,6 +309,12 @@ public class CBLiveDemo {
 							} catch (InterruptedException e) {}
 						}
 					}
+				}
+				try {
+					frameLatch.await();
+				} catch (InterruptedException e) {
+					System.out.println("Frame Latch Interrupted");
+				
 				}
 			}
 		}
@@ -263,6 +405,20 @@ public class CBLiveDemo {
 		}
 	}
 
+	private static void shufflePixelOrder()
+	{
+		int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
+		List<Integer> randomList = new ArrayList<Integer>();
+		    for (int i = 0; i < numPixels; i++) {
+		      randomList.add(i);
+		    }
+		    Collections.shuffle(randomList);
+		    pixelOrder = new int[numPixels];
+		    for (int i = 0; i < numPixels; i++) {
+		      pixelOrder[i] = randomList.get(i);
+		    }
+	}
+	
 	public static void main(String[] args) throws Exception {
 		ArrayList<URI> nodes = new ArrayList<URI>();
 
@@ -274,13 +430,30 @@ public class CBLiveDemo {
 		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,300,0);
 		zoomWindow.start();
 
+		shufflePixelOrder();
 
+		// Tell things using spymemcached logging to use internal SunLogger API
+		Properties systemProperties = System.getProperties();
+		systemProperties.put("net.spy.log.LoggerImpl", "net.spy.memcached.compat.log.SunLogger");
+		System.setProperties(systemProperties);
+
+		Logger.getLogger("net.spy.memcached").setLevel(Level.OFF);
+		Logger.getLogger("com.couchbase.client").setLevel(Level.WARNING);
+		Logger.getLogger("com.couchbase.client.vbucket").setLevel(Level.OFF);
+		
 		// Add one or more nodes of your cluster (exchange the IP with yours)
 		nodes.add(URI.create("http://" + HOST + "/pools"));
 
 		// Try to connect to the client
 		try {
-			client = new CouchbaseClient(nodes, BUCKET, "");
+			CouchbaseConnectionFactoryBuilder cfb = new CouchbaseConnectionFactoryBuilder();
+			cfb.setOpTimeout(500);  // wait up to 0.5 seconds for an operation to succeed
+			cfb.setOpQueueMaxBlockTime(500); // wait up to 0.5 seconds when trying to enqueue an operation
+			//cfb.setMaxReconnectDelay(500);
+			//cfb.setTimeoutExceptionThreshold(10);
+			cfb.setFailureMode(FailureMode.Cancel);
+			client = new CouchbaseClient(cfb.buildCouchbaseConnection(nodes, BUCKET, ""));
+
 		} catch (Exception e) {
 			System.err.println("Error connecting to Couchbase: " + e.getMessage());
 			System.exit(1);
