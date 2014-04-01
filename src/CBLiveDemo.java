@@ -32,7 +32,6 @@ import net.spy.memcached.internal.OperationCompletionListener;
 import net.spy.memcached.internal.OperationFuture;
 
 
-// TODO Latching
 // TODO Failure Handling in bulk Get
 // TODO Investigate Bulk timeouts.
 
@@ -40,26 +39,29 @@ public class CBLiveDemo {
 	// Global options
 	// gets, sets per second.
 
-//	private static String HOST = "192.168.60.105:8091";
-	private static String HOST = "127.0.0.1:8091";
-	private static String BUCKET = "default";
-	private static int MAX_SETS_SEC = 10000;
-	private static int MAX_GETS_SEC = 10000;
+	private static String HOST = "192.168.60.105:8091";
+	private static String BUCKET = "PRIMARY";
+	
+//	private static String HOST = "192.168.60.205:8091";
+//	private static String BUCKET = "BACKUP";
+	
+	private static int MAX_SETS_SEC = 50000;
+	private static int MAX_GETS_SEC = 50000;
 	private static int BULK_GETS = 1;
 	private static boolean USE_ASYNC = true;
 
 
 	private static int FRAME_RATE = 25;                     // Frames Per Second
 	private static int ZOOM_PIXEL_SIZE = 10;
-	private static int ZOOM_WIDTH = 100;
+	private static int ZOOM_WIDTH = 60;
 	private static int ZOOM_HEIGHT = 60;
 	private static int ZOOM_X_OFFSET = 130;
 	private static int ZOOM_Y_OFFSET = 20;
 	private static int NUM_IMAGES = 2;
 	private static BufferedImage[] imageSet;
 	private static int[] pixelOrder;
-	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/London_400x200.jpg";
-	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/CB_Demo_400x200.jpg";
+	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/London_500x500.jpg";
+	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/CB_Demo_500x500.jpg";
 	
 	private static CountDownLatch frameLatch;
 	// Thread 1 - reader
@@ -180,8 +182,14 @@ public class CBLiveDemo {
 					{
 						if (BULK_GETS == 1)
 						{
-							GetFuture<Object> future = client.asyncGet("px_" + pixel);
-							future.addListener(new MyListener(pixel));
+							try{
+								GetFuture<Object> future = client.asyncGet("px_" + pixel);
+								future.addListener(new MyListener(pixel));
+							}
+							catch (IllegalStateException e)
+							{
+								frameLatch.countDown(); //unable to request this pixel. Ignore it.
+							}
 						}
 						else
 						{
@@ -288,7 +296,13 @@ public class CBLiveDemo {
 					r = imageData[(pixel*3) + 2] & 0xff;
 					pixelValue = (r << 16) | (g << 8) | (b << 0 ); 					
 
-					OperationFuture<Boolean> future = client.set("px_"+pixel,pixelValue);
+					try{
+						OperationFuture<Boolean> future = client.set("px_"+pixel,pixelValue);
+					}
+					catch (IllegalStateException e)
+					{
+						//couldn't write this pixel. Ignore
+					}
 					//future.addListener(new WriteListener(i));
 //					try {
 //						future.get();
@@ -425,9 +439,9 @@ public class CBLiveDemo {
 		imageSet = new BufferedImage[NUM_IMAGES];
 		imageSet[0] = ImageIO.read(new File(IMAGE_0_PATH));
 		imageSet[1] = ImageIO.read(new File(IMAGE_1_PATH));
-		mainWindow = new RenderMainWindow(imageSet[0].getWidth(),imageSet[0].getHeight(),0,0);
+		mainWindow = new RenderMainWindow(imageSet[0].getWidth(),imageSet[0].getHeight(),800,0);
 		mainWindow.start();
-		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,300,0);
+		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,800,400);
 		zoomWindow.start();
 
 		shufflePixelOrder();
@@ -437,9 +451,9 @@ public class CBLiveDemo {
 		systemProperties.put("net.spy.log.LoggerImpl", "net.spy.memcached.compat.log.SunLogger");
 		System.setProperties(systemProperties);
 
-		Logger.getLogger("net.spy.memcached").setLevel(Level.OFF);
+		Logger.getLogger("net.spy.memcached").setLevel(Level.WARNING);
 		Logger.getLogger("com.couchbase.client").setLevel(Level.WARNING);
-		Logger.getLogger("com.couchbase.client.vbucket").setLevel(Level.OFF);
+		Logger.getLogger("com.couchbase.client.vbucket").setLevel(Level.WARNING);
 		
 		// Add one or more nodes of your cluster (exchange the IP with yours)
 		nodes.add(URI.create("http://" + HOST + "/pools"));
@@ -447,11 +461,13 @@ public class CBLiveDemo {
 		// Try to connect to the client
 		try {
 			CouchbaseConnectionFactoryBuilder cfb = new CouchbaseConnectionFactoryBuilder();
-			cfb.setOpTimeout(500);  // wait up to 0.5 seconds for an operation to succeed
-			cfb.setOpQueueMaxBlockTime(500); // wait up to 0.5 seconds when trying to enqueue an operation
+			cfb.setOpTimeout(1000);  // wait up to 0.5 seconds for an operation to succeed
+			cfb.setOpQueueMaxBlockTime(1); // wait up to 0.5 seconds when trying to enqueue an operation
 			//cfb.setMaxReconnectDelay(500);
 			//cfb.setTimeoutExceptionThreshold(10);
 			cfb.setFailureMode(FailureMode.Cancel);
+			
+			cfb.setUseNagleAlgorithm(true);
 			client = new CouchbaseClient(cfb.buildCouchbaseConnection(nodes, BUCKET, ""));
 
 		} catch (Exception e) {
