@@ -31,86 +31,43 @@ import net.spy.memcached.internal.GetFuture;
 import net.spy.memcached.internal.OperationCompletionListener;
 import net.spy.memcached.internal.OperationFuture;
 
-
-// TODO Failure Handling in bulk Get
-// TODO Investigate Bulk timeouts.
-
 public class CBLiveDemo {
-	// Global options
-	// gets, sets per second.
 
+	// Select PRIMARY datacentre
 	private static String HOST = "192.168.60.105:8091";
 	private static String BUCKET = "PRIMARY";
-	
-//	private static String HOST = "192.168.60.205:8091";
-//	private static String BUCKET = "BACKUP";
-	
-	private static int MAX_SETS_SEC = 50000;
-	private static int MAX_GETS_SEC = 50000;
-	private static int BULK_GETS = 1;
+
+	// Select BACKUP datacentre	
+	//	private static String HOST = "192.168.60.206:8091";
+	//	private static String BUCKET = "BACKUP";
+
+
+	private static int MAX_SETS_SEC = 10000;
+	private static int MAX_GETS_SEC = 10000;
 	private static boolean USE_ASYNC = true;
 
 
 	private static int FRAME_RATE = 25;                     // Frames Per Second
 	private static int ZOOM_PIXEL_SIZE = 10;
-	private static int ZOOM_WIDTH = 60;
-	private static int ZOOM_HEIGHT = 60;
+	private static int ZOOM_WIDTH = 30;
+	private static int ZOOM_HEIGHT = 40;
 	private static int ZOOM_X_OFFSET = 130;
-	private static int ZOOM_Y_OFFSET = 20;
-	private static int NUM_IMAGES = 2;
+	private static int ZOOM_Y_OFFSET = 220;
+	private static int NUM_IMAGES = 4;
 	private static BufferedImage[] imageSet;
 	private static int[] pixelOrder;
-	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/London_500x500.jpg";
-	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/CB_Demo_500x500.jpg";
-	
+	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/CB_Symbol_250x400.jpg";
+	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/hashtag_250x400.jpg";
+	private static final String IMAGE_2_PATH = "/Users/dhaikney/Desktop/3_values_250x400.jpg";
+	private static final String IMAGE_3_PATH = "/Users/dhaikney/Desktop/Big_Ben_250x400.jpg";
+
+	// This latch is used to keep the reader / writer threads in sync
 	private static CountDownLatch frameLatch;
-	// Thread 1 - reader
-	// Thread 2 - writer
-	// Thread 3 - draw window 1
-	// Thread 4 - draw window 2
 
 
 	public static class CBReader extends Thread {
 
 
-		class MyBulkListener implements BulkGetCompletionListener{
-
-			private int base;
-
-			MyBulkListener(int i)
-			{
-				base = i;
-			}
-
-			public void onComplete(BulkGetFuture<?> bulkGetFuture) {
-				if (bulkGetFuture.getStatus().isSuccess()) 
-				{
-					Map<String, ?> response;
-					try {
-						response = bulkGetFuture.get();
-					} catch (Exception e) {
-						mainWindow.window.pixelData[base] = 0xFF00FF;
-						return;
-					}
-					for (int j = 0; j < BULK_GETS; j++)
-					{
-						Object res = response.get("px_" + (base+j));
-						if (res != null){
-							mainWindow.window.pixelData[base+j] = (Integer) res;
-						}
-						else
-						{
-							mainWindow.window.pixelData[base+j] = 0xFF00FF;
-						}
-					}
-				}
-				else
-				{
-					// This one / set? didn't work
-					System.out.println("Multi Borked");
-				}
-			}
-		}
 
 		class MyListener implements GetCompletionListener{
 
@@ -143,7 +100,7 @@ public class CBLiveDemo {
 				else
 				{
 					// Unsuccessful - show cyan.
-					mainWindow.window.pixelData[base] = 0x00FFFF;
+					mainWindow.window.pixelData[base] = 0xFF00FF;
 				}
 				frameLatch.countDown();
 			}
@@ -155,7 +112,7 @@ public class CBLiveDemo {
 			int pixel;
 			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
 			List<String> keyList = new ArrayList<String>();
-			
+
 			// Loop forever:
 			//
 			//     For every pixel in the image; chunked into bulk size...
@@ -171,8 +128,8 @@ public class CBLiveDemo {
 
 				frameLatch = new CountDownLatch(numPixels);
 
-				
-				for(int i = 0; i < numPixels; i+= BULK_GETS)
+
+				for(int i = 0; i < numPixels; i++)
 				{
 					keyList.clear();
 
@@ -180,45 +137,26 @@ public class CBLiveDemo {
 
 					if (USE_ASYNC)
 					{
-						if (BULK_GETS == 1)
-						{
-							try{
-								GetFuture<Object> future = client.asyncGet("px_" + pixel);
-								future.addListener(new MyListener(pixel));
-							}
-							catch (IllegalStateException e)
-							{
-								frameLatch.countDown(); //unable to request this pixel. Ignore it.
-							}
+						try{
+							GetFuture<Object> future = client.asyncGet("px_" + pixel);
+							future.addListener(new MyListener(pixel));
 						}
-						else
+						catch (IllegalStateException e)
 						{
-							for (int j = 0; j < BULK_GETS; j++)
-							{
-								keyList.add("px_" + pixelOrder[(i+j)]);
-							}
-							client.asyncGetBulk(keyList).addListener(new MyBulkListener(pixel));
+							frameLatch.countDown(); //unable to request this pixel. Ignore it.
 						}
 					}
 					else // Synchronous
 					{
-						if (BULK_GETS == 1)
+						try
 						{
-							try
-							{
-								Object res = client.get("px_" + pixel);
-								mainWindow.window.pixelData[pixel] = (Integer) res;
-							}
-							catch(OperationTimeoutException e)
-							{
-								System.out.println("TIMEOUT on px_"  + pixel);
-								mainWindow.window.pixelData[pixel] = 0x00FFFF;
-							}
+							Object res = client.get("px_" + pixel);
+							mainWindow.window.pixelData[pixel] = (Integer) res;
 						}
-						else
+						catch(OperationTimeoutException e)
 						{
-							// TODO
-							assert(false);
+							System.out.println("TIMEOUT on px_"  + pixel);
+							mainWindow.window.pixelData[pixel] = 0xFF00FF;
 						}
 					}
 					if (( i % (MAX_GETS_SEC/20)) == 0)
@@ -246,7 +184,7 @@ public class CBLiveDemo {
 	}
 
 	public static class CBWriter extends Thread  {
-		
+
 		class WriteListener implements OperationCompletionListener{
 
 			private int base;
@@ -259,14 +197,13 @@ public class CBLiveDemo {
 			public void onComplete(OperationFuture<?> future) {
 				try {
 					future.get();
-					mainWindow.window.pixelData[base] = 0x00FF00;
 				} catch (Exception e) {
-					System.out.println("WRITE EXCEPTION!");
+					//	System.out.println("WRITE EXCEPTION!");
 					mainWindow.window.pixelData[base] = 0xFF00FF;
 				}
 			}
 		}
-		
+
 		public void run() {
 
 			long startTime, currentTime;
@@ -277,20 +214,21 @@ public class CBLiveDemo {
 
 			// Loop forever:
 			//
-			//    Select image to write (1 of 2).
+			//    Select image to write
 			//    For every pixel in the image...
 			//        write pixel value to Couchbase (set).
-			//
-			//        after MAX_SETS_PER_SECOND
-			//        if <1 has passed, wait until the end of that second.
+
 			while (true){
 				startTime = System.currentTimeMillis();
-				imageID = imageID ^ 0x1;
+
+				// cycle through the images
+				imageID = (imageID + 1) % NUM_IMAGES;
 				imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
+
 				for(int i = 0; i < numPixels; i++)
 				{
 					pixel = pixelOrder[i];
-					
+
 					b = imageData[(pixel*3) + 0] & 0xff;
 					g = imageData[(pixel*3) + 1 ] & 0xff;
 					r = imageData[(pixel*3) + 2] & 0xff;
@@ -298,20 +236,14 @@ public class CBLiveDemo {
 
 					try{
 						OperationFuture<Boolean> future = client.set("px_"+pixel,pixelValue);
+						future.addListener(new WriteListener(pixel));
 					}
 					catch (IllegalStateException e)
 					{
-						//couldn't write this pixel. Ignore
+						// couldn't write this pixel. Ignore
 					}
-					//future.addListener(new WriteListener(i));
-//					try {
-//						future.get();
-//						mainWindow.window.pixelData[i] = 0x00FF00;
-//					} catch (Exception e) {
-//						System.out.println("WRITE EXCEPTION (2)!");
-//						mainWindow.window.pixelData[i] = 0xFF00FF;
-//					}
-					
+
+					// 20 times a second we are going to rate-limit the number of ops to increase smoothness
 					if (( i % (MAX_SETS_SEC/20)) == 0)
 					{
 						currentTime = System.currentTimeMillis();
@@ -324,11 +256,13 @@ public class CBLiveDemo {
 						}
 					}
 				}
+
+				// At the end of each frame sit and wait for all pixels to be read before we go again
 				try {
 					frameLatch.await();
 				} catch (InterruptedException e) {
 					System.out.println("Frame Latch Interrupted");
-				
+
 				}
 			}
 		}
@@ -419,29 +353,32 @@ public class CBLiveDemo {
 		}
 	}
 
+	// One-off call in order to give a "dissolve" effect
 	private static void shufflePixelOrder()
 	{
 		int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
 		List<Integer> randomList = new ArrayList<Integer>();
-		    for (int i = 0; i < numPixels; i++) {
-		      randomList.add(i);
-		    }
-		    Collections.shuffle(randomList);
-		    pixelOrder = new int[numPixels];
-		    for (int i = 0; i < numPixels; i++) {
-		      pixelOrder[i] = randomList.get(i);
-		    }
+		for (int i = 0; i < numPixels; i++) {
+			randomList.add(i);
+		}
+		Collections.shuffle(randomList);
+		pixelOrder = new int[numPixels];
+		for (int i = 0; i < numPixels; i++) {
+			pixelOrder[i] = randomList.get(i);
+		}
 	}
-	
+
 	public static void main(String[] args) throws Exception {
 		ArrayList<URI> nodes = new ArrayList<URI>();
 
 		imageSet = new BufferedImage[NUM_IMAGES];
 		imageSet[0] = ImageIO.read(new File(IMAGE_0_PATH));
 		imageSet[1] = ImageIO.read(new File(IMAGE_1_PATH));
-		mainWindow = new RenderMainWindow(imageSet[0].getWidth(),imageSet[0].getHeight(),800,0);
+		imageSet[2] = ImageIO.read(new File(IMAGE_2_PATH));
+		imageSet[3] = ImageIO.read(new File(IMAGE_3_PATH));
+		mainWindow = new RenderMainWindow(imageSet[0].getWidth(),imageSet[0].getHeight(),1000,0);
 		mainWindow.start();
-		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,800,400);
+		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,1000,400);
 		zoomWindow.start();
 
 		shufflePixelOrder();
@@ -454,19 +391,19 @@ public class CBLiveDemo {
 		Logger.getLogger("net.spy.memcached").setLevel(Level.WARNING);
 		Logger.getLogger("com.couchbase.client").setLevel(Level.WARNING);
 		Logger.getLogger("com.couchbase.client.vbucket").setLevel(Level.WARNING);
-		
+
 		// Add one or more nodes of your cluster (exchange the IP with yours)
 		nodes.add(URI.create("http://" + HOST + "/pools"));
 
 		// Try to connect to the client
 		try {
 			CouchbaseConnectionFactoryBuilder cfb = new CouchbaseConnectionFactoryBuilder();
-			cfb.setOpTimeout(1000);  // wait up to 0.5 seconds for an operation to succeed
-			cfb.setOpQueueMaxBlockTime(1); // wait up to 0.5 seconds when trying to enqueue an operation
+			cfb.setOpTimeout(1000);  // wait up to 1 second for an operation to succeed
+			cfb.setOpQueueMaxBlockTime(500); // wait up to 0.5 seconds when trying to enqueue an operation
 			//cfb.setMaxReconnectDelay(500);
 			//cfb.setTimeoutExceptionThreshold(10);
 			cfb.setFailureMode(FailureMode.Cancel);
-			
+
 			cfb.setUseNagleAlgorithm(true);
 			client = new CouchbaseClient(cfb.buildCouchbaseConnection(nodes, BUCKET, ""));
 
