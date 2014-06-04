@@ -6,6 +6,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.awt.image.DataBufferByte;
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,12 +35,14 @@ import net.spy.memcached.internal.OperationFuture;
 public class CBLiveDemo {
 
 	// Select PRIMARY datacentre
-	private static String HOST = "192.168.60.105:8091";
-	private static String BUCKET = "PRIMARY";
+    private static String HOST = "localhost:9000";
+    private static String BUCKET = "cblive";
+    private static String PASS = "cblive";
 
 	// Select BACKUP datacentre	
-	//	private static String HOST = "192.168.60.206:8091";
-	//	private static String BUCKET = "BACKUP";
+//    private static String HOST = "10.8.7.5:8091";
+//    private static String BUCKET = "target-bucket";
+//    private static String PASS = "";
 
 
 	private static int MAX_SETS_SEC = 10000;
@@ -47,22 +50,18 @@ public class CBLiveDemo {
 	private static boolean USE_ASYNC = true;
 
 
-	private static int FRAME_RATE = 25;                     // Frames Per Second
-	private static int ZOOM_PIXEL_SIZE = 10;
-	private static int ZOOM_WIDTH = 30;
-	private static int ZOOM_HEIGHT = 40;
-	private static int ZOOM_X_OFFSET = 130;
-	private static int ZOOM_Y_OFFSET = 220;
-	private static int NUM_IMAGES = 4;
-	private static BufferedImage[] imageSet;
-	private static int[] pixelOrder;
-	private static final String IMAGE_0_PATH = "/Users/dhaikney/Desktop/CB_Symbol_250x400.jpg";
-	private static final String IMAGE_1_PATH = "/Users/dhaikney/Desktop/hashtag_250x400.jpg";
-	private static final String IMAGE_2_PATH = "/Users/dhaikney/Desktop/3_values_250x400.jpg";
-	private static final String IMAGE_3_PATH = "/Users/dhaikney/Desktop/Big_Ben_250x400.jpg";
-
-	// This latch is used to keep the reader / writer threads in sync
-	private static CountDownLatch frameLatch;
+    private static int FRAME_RATE = 25;                     // Frames Per Second
+    private static int ZOOM_PIXEL_SIZE = 10;
+    private static int ZOOM_WIDTH = 30;
+    private static int ZOOM_HEIGHT = 40;
+    private static int ZOOM_X_OFFSET = 130;
+    private static int ZOOM_Y_OFFSET = 220;
+    private static int[] pixelOrder;
+    private static ArrayList<BufferedImage> imageSet;
+    private static final String IMAGES[] = {"images/CB_Symbol_250x400.jpg", "images/hashtag_250x400.jpg",
+            "images/3_values_250x400.jpg", "images/CB_SKY_250x400.jpg"};
+    // This latch is used to keep the reader / writer threads in sync
+    private static CountDownLatch frameLatch;
 
 
 	public static class CBReader extends Thread {
@@ -85,7 +84,10 @@ public class CBLiveDemo {
 					try {
 						res = future.get();
 					} catch (Exception e) {
+                        // Error - show magenta.
 						mainWindow.window.pixelData[base] = 0xFF00FF;
+                        System.err.println("Exception on get " + e.getMessage());
+                        System.err.println("Status on future " + future.getStatus().getMessage());
 						return;
 					}
 					if (res != null){
@@ -93,15 +95,24 @@ public class CBLiveDemo {
 					}
 					else
 					{
-						// Null - show magenta.
-						mainWindow.window.pixelData[base] = 0xFF00FF;
+						// Null - show black.
+                        // “Indigo with terra sienna, Prussian blue with burnt sienna, really give much deeper tones
+                        // than pure black itself. When I hear people say ‘there is no black in nature’, I sometimes
+                        // think, ‘There is no real black in colors either’. However, you must beware of falling into
+                        // the error of thinking that the colorists do not use black, for of course as soon as an
+                        // element of blue, red, or yellow is mixed with black, it becomes a gray, namely, a dark, r
+                        // eddish, yellowish, or bluish gray.”
+                        // Vincent van Gogh (Letter to Theo van Gogh, June 1884)
+						mainWindow.window.pixelData[base] = 0x000000;
+                        System.err.println("Empty for some reason " + future.getStatus().getMessage());
 					}
 				}
 				else
 				{
 					// Unsuccessful - show cyan.
-					mainWindow.window.pixelData[base] = 0xFF00FF;
-				}
+                    mainWindow.window.pixelData[base] = 0x00FFFF;
+                    System.err.println("No result " + future.getStatus().getMessage());
+                }
 				frameLatch.countDown();
 			}
 		}
@@ -110,7 +121,7 @@ public class CBLiveDemo {
 
 			long startTime, currentTime;
 			int pixel;
-			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
+			int numPixels = imageSet.get(0).getWidth() * imageSet.get(0).getHeight();
 			List<String> keyList = new ArrayList<String>();
 
 			// Loop forever:
@@ -198,8 +209,9 @@ public class CBLiveDemo {
 				try {
 					future.get();
 				} catch (Exception e) {
-					//	System.out.println("WRITE EXCEPTION!");
-					mainWindow.window.pixelData[base] = 0xFF00FF;
+				    System.err.println("WRITE EXCEPTION!");
+                    System.err.println(e.getMessage());
+                    mainWindow.window.pixelData[base] = 0xFF00FF;
 				}
 			}
 		}
@@ -207,7 +219,7 @@ public class CBLiveDemo {
 		public void run() {
 
 			long startTime, currentTime;
-			int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
+			int numPixels = imageSet.get(0).getWidth() * imageSet.get(0).getHeight();
 			int r,g,b, pixelValue, pixel;
 			int imageID = 0;
 			byte[] imageData;
@@ -222,8 +234,8 @@ public class CBLiveDemo {
 				startTime = System.currentTimeMillis();
 
 				// cycle through the images
-				imageID = (imageID + 1) % NUM_IMAGES;
-				imageData = ((DataBufferByte)imageSet[imageID].getRaster().getDataBuffer()).getData();
+				imageID = (imageID + 1) % IMAGES.length;
+				imageData = ((DataBufferByte)imageSet.get(imageID).getRaster().getDataBuffer()).getData();
 
 				for(int i = 0; i < numPixels; i++)
 				{
@@ -345,7 +357,7 @@ public class CBLiveDemo {
 				{
 					try {
 						Thread.sleep((startTime + framePause) - currentTime);
-					} catch (InterruptedException e) {}
+					} catch (InterruptedException ignored) {}
 				}
 
 			} while (true);
@@ -356,7 +368,7 @@ public class CBLiveDemo {
 	// One-off call in order to give a "dissolve" effect
 	private static void shufflePixelOrder()
 	{
-		int numPixels = imageSet[0].getWidth() * imageSet[0].getHeight();
+		int numPixels = imageSet.get(0).getWidth() * imageSet.get(0).getHeight();
 		List<Integer> randomList = new ArrayList<Integer>();
 		for (int i = 0; i < numPixels; i++) {
 			randomList.add(i);
@@ -371,12 +383,19 @@ public class CBLiveDemo {
 	public static void main(String[] args) throws Exception {
 		ArrayList<URI> nodes = new ArrayList<URI>();
 
-		imageSet = new BufferedImage[NUM_IMAGES];
-		imageSet[0] = ImageIO.read(new File(IMAGE_0_PATH));
-		imageSet[1] = ImageIO.read(new File(IMAGE_1_PATH));
-		imageSet[2] = ImageIO.read(new File(IMAGE_2_PATH));
-		imageSet[3] = ImageIO.read(new File(IMAGE_3_PATH));
-		mainWindow = new RenderMainWindow(imageSet[0].getWidth(),imageSet[0].getHeight(),1000,0);
+        imageSet = new ArrayList<BufferedImage>();
+        int i = 0;
+        for (String image : IMAGES) {
+            try {
+                imageSet.add(ImageIO.read(new File(image)));
+                i++;
+            } catch (IOException e) {
+                throw new RuntimeException("Could not read the file " + image, e);
+            }
+        }
+
+
+        mainWindow = new RenderMainWindow(imageSet.get(0).getWidth(),imageSet.get(0).getHeight(),1000,0);
 		mainWindow.start();
 		zoomWindow = new  RenderZoomWindow(ZOOM_WIDTH * ZOOM_PIXEL_SIZE,ZOOM_HEIGHT * ZOOM_PIXEL_SIZE,1000,400);
 		zoomWindow.start();
@@ -405,7 +424,7 @@ public class CBLiveDemo {
 			cfb.setFailureMode(FailureMode.Cancel);
 
 			cfb.setUseNagleAlgorithm(true);
-			client = new CouchbaseClient(cfb.buildCouchbaseConnection(nodes, BUCKET, ""));
+			client = new CouchbaseClient(cfb.buildCouchbaseConnection(nodes, BUCKET, PASS));
 
 		} catch (Exception e) {
 			System.err.println("Error connecting to Couchbase: " + e.getMessage());
